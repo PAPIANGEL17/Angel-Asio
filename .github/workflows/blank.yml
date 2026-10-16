@@ -1,0 +1,61 @@
+name: Build AMR Angel ASIO
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            suffix: x64
+            regsvr: C:\Windows\System32\regsvr32.exe
+          - arch: Win32
+            suffix: x86
+            regsvr: C:\Windows\SysWOW64\regsvr32.exe
+    env:
+      ANGELASIO_VIRTUAL: "1"   # el runner no tiene tarjeta de audio: la prueba usa el reloj virtual
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar
+        run: cmake -S . -B build -A ${{ matrix.arch }}
+
+      - name: Compilar
+        run: cmake --build build --config Release
+
+      - name: Prueba de humo (carga directa de la DLL)
+        run: .\build\Release\asio_smoke_test.exe "$PWD\build\Release\AngelASIO.dll"
+
+      - name: Prueba de humo (registro COM como lo hace un DAW)
+        shell: cmd
+        run: |
+          "${{ matrix.regsvr }}" /s build\Release\AngelASIO.dll
+          if errorlevel 1 exit /b 1
+          reg query "HKLM\SOFTWARE\ASIO\AMR Angel ASIO"
+          build\Release\asio_smoke_test.exe --com
+          set RC=%errorlevel%
+          "${{ matrix.regsvr }}" /u /s build\Release\AngelASIO.dll
+          exit /b %RC%
+
+      - name: Empaquetar
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build\Release\AngelASIO.dll dist\
+          Copy-Item scripts\install_${{ matrix.suffix }}.bat dist\install.bat
+          Copy-Item scripts\uninstall_${{ matrix.suffix }}.bat dist\uninstall.bat
+          Copy-Item scripts\panel_${{ matrix.suffix }}.bat dist\panel.bat
+          Copy-Item config.example.ini dist\
+          Copy-Item README.md dist\
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AMR-Angel-ASIO-${{ matrix.suffix }}
+          path: dist/
